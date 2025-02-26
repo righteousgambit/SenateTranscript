@@ -78,53 +78,63 @@ def verify_recording(video_file, audio_file, process):
         return False
 
     # Check for file creation with longer timeout
-    timeout = 30  # Increased timeout to 30 seconds
+    timeout = 30  # 30 seconds total timeout
     start_time = time.time()
-    files_exist = False
-    files_growing = False
+    check_interval = 2  # Check every 2 seconds
     
+    video_growing = False
+    last_video_size = 0
+    
+    # First wait for video file to exist
     while time.time() - start_time < timeout:
-        # First, wait for files to exist
-        if not files_exist and os.path.exists(video_file) and os.path.exists(audio_file):
-            files_exist = True
-            logging.info("✓ Files created successfully")
-            logging.info("  - Video: %s", video_file)
-            logging.info("  - Audio: %s", audio_file)
-            time.sleep(3)  # Give files a moment to start growing
-            continue
-
-        # Then check if they're growing
-        if files_exist and not files_growing:
-            video_size = os.path.getsize(video_file)
-            audio_size = os.path.getsize(audio_file)
-            time.sleep(2)
+        if os.path.exists(video_file):
+            logging.info("✓ Video file created successfully: %s", video_file)
+            last_video_size = os.path.getsize(video_file)
             
-            video_growth = os.path.getsize(video_file) - video_size
-            audio_growth = os.path.getsize(audio_file) - audio_size
-            
-            if video_growth > 0 and audio_growth > 0:
-                logging.info("✓ Files are growing:")
-                logging.info("  - Video: +%d bytes", video_growth)
-                logging.info("  - Audio: +%d bytes", audio_growth)
-                return True
-            
+            # Log audio file status but don't require it
+            if os.path.exists(audio_file):
+                audio_size = os.path.getsize(audio_file)
+                logging.info("Audio file status: %s (%d bytes)", audio_file, audio_size)
+            else:
+                logging.info("Audio file not created yet: %s", audio_file)
+            break
         time.sleep(1)
-        logging.info("Waiting for files to be created and grow... (%ds)", int(time.time() - start_time))
+        logging.info("Waiting for video file to be created... (%ds)", int(time.time() - start_time))
+    else:
+        logging.error("Timeout waiting for video file to be created")
+        return False
 
-    logging.error("Recording verification failed:")
-    if not os.path.exists(video_file):
-        logging.error("Video file was not created")
-    elif os.path.getsize(video_file) == 0:
-        logging.error("Video file exists but is empty")
-    else:
-        logging.info("Video file size: %d bytes", os.path.getsize(video_file))
+    # Then check primarily for video growth
+    checks_remaining = 5  # Check growth over 5 intervals
+    while checks_remaining > 0 and time.time() - start_time < timeout:
+        time.sleep(check_interval)
         
-    if not os.path.exists(audio_file):
-        logging.error("Audio file was not created")
-    elif os.path.getsize(audio_file) == 0:
-        logging.error("Audio file exists but is empty")
-    else:
-        logging.info("Audio file size: %d bytes", os.path.getsize(audio_file))
+        current_video_size = os.path.getsize(video_file)
+        
+        # Check video growth (primary indicator)
+        if not video_growing and current_video_size > last_video_size:
+            video_growing = True
+            logging.info("✓ Video file is growing (+%d bytes)", current_video_size - last_video_size)
+            # If video is growing, we consider the recording valid
+            logging.info("✓ Recording verified - video stream is active")
+            return True
+            
+        # Update last size
+        last_video_size = current_video_size
+        
+        # Log audio status for debugging
+        if os.path.exists(audio_file):
+            audio_size = os.path.getsize(audio_file)
+            if audio_size > 0:
+                logging.debug("Audio file size: %d bytes", audio_size)
+            
+        checks_remaining -= 1
+        logging.info("Checking video growth... (%d checks remaining)", checks_remaining)
+
+    # Final status report
+    logging.error("Recording verification failed:")
+    if not video_growing:
+        logging.error("Video file not growing (size: %d bytes)", last_video_size)
     
     return False
 
